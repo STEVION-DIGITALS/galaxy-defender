@@ -1,0 +1,701 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Galaxy Defender</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: #080b20;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    padding: 12px;
+}
+
+h1 {
+    color: #38bdf8;
+    margin: 10px;
+}
+
+#stats {
+    display: flex;
+    justify-content: center;
+    gap: 25px;
+    flex-wrap: wrap;
+    margin: 12px;
+}
+
+#game {
+    width: min(500px, 100%);
+    height: 600px;
+    max-height: 70vh;
+    min-height: 350px;
+    background: #030712;
+    border: 3px solid #38bdf8;
+    border-radius: 12px;
+    display: block;
+    margin: auto;
+    touch-action: none;
+}
+
+#controls {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin: 15px;
+}
+
+button {
+    background: #0369a1;
+    color: white;
+    border: 2px solid #38bdf8;
+    border-radius: 12px;
+    padding: 15px 22px;
+    font-size: 20px;
+    font-weight: bold;
+    touch-action: none;
+}
+
+button:active {
+    background: #0ea5e9;
+}
+
+#fire {
+    background: #b91c1c;
+    border-color: #f87171;
+}
+
+#restart {
+    font-size: 16px;
+    padding: 10px 20px;
+}
+#menu {
+    background: #111c3d;
+    border: 2px solid #38bdf8;
+    border-radius: 15px;
+    padding: 20px;
+    width: min(450px, 95%);
+    margin: 15px auto;
+}
+
+#menu h2 {
+    color: #38bdf8;
+}
+
+#menu button {
+    margin: 6px;
+    font-size: 16px;
+}
+
+#menu p {
+    color: #cbd5e1;
+}
+</style>
+</head>
+
+<body>
+
+<h1>🚀 GALAXY DEFENDER</h1>
+
+<div id="stats">
+    <span id="score">Score: 0</span>
+    <span id="lives">Lives: 3</span>
+    <span id="highscore">Best: 0</span>
+</div>
+<div id="menu">
+    <h2>READY FOR BATTLE?</h2>
+    <p>Choose your difficulty</p>
+
+    <button onclick="startGame('easy')">EASY</button>
+    <button onclick="startGame('normal')">NORMAL</button>
+    <button onclick="startGame('hard')">HARD</button>
+</div>
+<canvas id="game" width="500" height="600"></canvas>
+
+<div id="controls">
+    <button id="left">◀</button>
+    <button id="fire">FIRE</button>
+    <button id="right">▶</button>
+</div>
+
+<button id="restart">Play Again</button>
+
+<p>Move with arrow keys and shoot with SPACE.</p>
+
+<script>
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const scoreDisplay = document.getElementById("score");
+const livesDisplay = document.getElementById("lives");
+const highDisplay = document.getElementById("highscore");
+const menu = document.getElementById("menu");
+
+let player, shots, enemies, stars, particles, enemyShots;
+let score = 0;
+let lives = 3;
+let highScore = Number(localStorage.getItem("galaxyBest")) || 0;
+let gameOver = false;
+let playing = false;
+let difficulty = "normal";
+let enemyMultiplier = 1;
+let spawnDelay = 1200;
+let lastShot = 0;
+let lastEnemy = 0;
+let keys = {};
+let animation;
+let audioContext;
+
+highDisplay.textContent = "Best: " + highScore;
+
+function playSound(frequency, duration, type = "sine", volume = 0.08) {
+    if (!audioContext) {
+        audioContext = new (
+            window.AudioContext || window.webkitAudioContext
+        )();
+    }
+
+    if (audioContext.state === "suspended") audioContext.resume();
+
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+
+    oscillator.type = type;
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(volume, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(
+        0.001,
+        audioContext.currentTime + duration
+    );
+
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + duration);
+}
+
+function playGameOverSound() {
+    playSound(300, 0.25, "sawtooth", 0.08);
+
+    setTimeout(() => {
+        playSound(180, 0.5, "triangle", 0.08);
+    }, 300);
+
+    setTimeout(() => {
+        playSound(100, 0.8, "sawtooth", 0.07);
+    }, 700);
+}
+
+function startGame(level) {
+    difficulty = level;
+
+    if (level === "easy") {
+        enemyMultiplier = 0.7;
+        spawnDelay = 1500;
+    } else if (level === "hard") {
+        enemyMultiplier = 1.7;
+        spawnDelay = 750;
+    } else {
+        enemyMultiplier = 1;
+        spawnDelay = 1200;
+    }
+
+    menu.style.display = "none";
+    document.getElementById("controls").style.display = "flex";
+    document.getElementById("restart").style.display = "inline-block";
+
+    resetGame();
+}
+
+function resetGame() {
+    player = {
+        x: 250,
+        y: 530,
+        width: 36,
+        height: 42,
+        speed: 3
+    };
+
+    shots = [];
+    enemies = [];
+    particles = [];
+    enemyShots = [];
+    keys = {};
+
+    stars = Array.from({length: 65}, () => ({
+        x: Math.random() * 500,
+        y: Math.random() * 600,
+        speed: 1 + Math.random() * 3,
+        size: Math.random() * 2 + 1
+    }));
+
+    score = 0;
+    lives = 3;
+    gameOver = false;
+    playing = true;
+
+    scoreDisplay.textContent = "Score: 0";
+    livesDisplay.textContent = "Lives: 3";
+
+    cancelAnimationFrame(animation);
+    lastEnemy = Date.now();
+    lastShot = 0;
+
+    gameLoop();
+}
+
+function drawPlayer() {
+    ctx.save();
+    ctx.translate(player.x, player.y);
+
+    // Engine flames
+    ctx.fillStyle = "#f97316";
+    ctx.shadowColor = "#f97316";
+    ctx.shadowBlur = 20;
+
+    ctx.beginPath();
+    ctx.moveTo(-7, 15);
+    ctx.lineTo(0, 34 + Math.random() * 6);
+    ctx.lineTo(7, 15);
+    ctx.fill();
+
+    // Main wings
+    ctx.shadowBlur = 15;
+    ctx.fillStyle = "#1e40af";
+    ctx.strokeStyle = "#38bdf8";
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.moveTo(0, -25);
+    ctx.lineTo(25, 18);
+    ctx.lineTo(9, 13);
+    ctx.lineTo(0, 20);
+    ctx.lineTo(-9, 13);
+    ctx.lineTo(-25, 18);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Central body
+    ctx.fillStyle = "#38bdf8";
+    ctx.beginPath();
+    ctx.moveTo(0, -30);
+    ctx.lineTo(10, 17);
+    ctx.lineTo(0, 12);
+    ctx.lineTo(-10, 17);
+    ctx.closePath();
+    ctx.fill();
+
+    // Cockpit
+    ctx.fillStyle = "#e0f2fe";
+    ctx.shadowColor = "#7dd3fc";
+    ctx.shadowBlur = 15;
+
+    ctx.beginPath();
+    ctx.ellipse(0, -8, 5, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Wing lights
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = "#facc15";
+
+    ctx.beginPath();
+    ctx.arc(-16, 13, 2, 0, Math.PI * 2);
+    ctx.arc(16, 13, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+function shoot() {
+    const now = Date.now();
+    if (now - lastShot < 250 || gameOver) return;
+
+    shots.push({
+        x: player.x,
+        y: player.y - 25,
+        speed: 8
+    });
+
+    playSound(750, 0.12, "square", 0.035);
+    lastShot = now;
+}
+
+function createEnemy() {
+    const randomType = Math.random();
+
+    let enemy;
+
+    if (randomType < 0.5) {
+        // Red Fighter
+        enemy = {
+            x: 25 + Math.random() * 450,
+            y: -30,
+            size: 22,
+            speed: (1.5 + score / 150) * enemyMultiplier,
+            type: "fighter",
+            health: 1
+        };
+    } 
+    else if (randomType < 0.8) {
+        // Purple Speedster
+        enemy = {
+            x: 25 + Math.random() * 450,
+            y: -30,
+            size: 18,
+            speed: (2.5 + score / 120) * enemyMultiplier,
+            type: "speedster",
+            health: 1
+        };
+    } 
+    else {
+        // Green Tank
+        enemy = {
+            x: 25 + Math.random() * 450,
+            y: -30,
+            size: 27,
+            speed: (0.9 + score / 200) * enemyMultiplier,
+            type: "tank",
+            health: 2
+        };
+    }
+
+    enemies.push(enemy);
+}
+function enemyShoot(enemy) {
+    enemyShots.push({
+        x: enemy.x,
+        y: enemy.y + 15,
+        speed: 5
+    });
+}
+function drawEnemy(enemy) {
+    ctx.save();
+    ctx.translate(enemy.x, enemy.y);
+
+    if (enemy.type === "fighter") {
+        // RED FIGHTER
+        ctx.fillStyle = "#ef4444";
+        ctx.shadowColor = "#ef4444";
+        ctx.shadowBlur = 15;
+
+        ctx.beginPath();
+        ctx.moveTo(-20, -12);
+        ctx.lineTo(20, -12);
+        ctx.lineTo(14, 12);
+        ctx.lineTo(0, 20);
+        ctx.lineTo(-14, 12);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    else if (enemy.type === "speedster") {
+        // PURPLE SPEEDSTER
+        ctx.fillStyle = "#a855f7";
+        ctx.shadowColor = "#c084fc";
+        ctx.shadowBlur = 18;
+
+        ctx.beginPath();
+        ctx.moveTo(0, -22);
+        ctx.lineTo(15, 0);
+        ctx.lineTo(0, 18);
+        ctx.lineTo(-15, 0);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    else if (enemy.type === "tank") {
+        // GREEN TANK
+        ctx.fillStyle = "#22c55e";
+        ctx.shadowColor = "#4ade80";
+        ctx.shadowBlur = 18;
+
+        ctx.fillRect(-20, -18, 40, 36);
+
+        ctx.fillStyle = "#14532d";
+        ctx.fillRect(-12, -10, 24, 20);
+
+        // Health indicator
+        ctx.fillStyle = "white";
+        ctx.font = "10px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(enemy.health, 0, 4);
+    }
+
+    // Enemy eyes
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "white";
+    ctx.fillRect(-10, -4, 6, 5);
+    ctx.fillRect(4, -4, 6, 5);
+
+    ctx.restore();
+}
+
+function makeParticles(x, y) {
+    playSound(110, 0.3, "sawtooth", 0.06);
+
+    for (let i = 0; i < 30; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 2 + Math.random() * 6;
+
+        particles.push({
+            x: x,
+            y: y,
+            dx: Math.cos(angle) * speed,
+            dy: Math.sin(angle) * speed,
+            life: 35 + Math.random() * 20,
+            size: 2 + Math.random() * 5
+        });
+    }
+}
+function gameLoop() {
+    ctx.clearRect(0, 0, 500, 600);
+
+    ctx.fillStyle = "white";
+
+    stars.forEach(star => {
+        star.y += star.speed;
+
+        if (star.y > 600) {
+            star.y = 0;
+            star.x = Math.random() * 500;
+        }
+
+        ctx.globalAlpha = 0.6;
+        ctx.fillRect(star.x, star.y, star.size, star.size);
+    });
+
+    ctx.globalAlpha = 1;
+
+    if (gameOver) {
+        ctx.fillStyle = "#38bdf8";
+        ctx.font = "bold 36px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("GAME OVER", 250, 270);
+
+        ctx.fillStyle = "white";
+        ctx.font = "20px Arial";
+        ctx.fillText("Final Score: " + score, 250, 315);
+
+        animation = requestAnimationFrame(gameLoop);
+        return;
+    }
+
+    if (keys.left) player.x -= player.speed;
+    if (keys.right) player.x += player.speed;
+
+    player.x = Math.max(22, Math.min(478, player.x));
+
+    if (keys.fire) shoot();
+
+    drawPlayer();
+    enemyShots.forEach((shot, index) => {
+    shot.y += shot.speed;
+
+    ctx.fillStyle = "#fb7185";
+    ctx.shadowColor = "#ef4444";
+    ctx.shadowBlur = 15;
+    ctx.fillRect(shot.x - 3, shot.y, 6, 15);
+    ctx.shadowBlur = 0;
+
+    // Remove lasers that leave the screen
+    if (shot.y > 600) {
+        enemyShots.splice(index, 1);
+        return;
+    }
+
+    // Check if laser hits player
+    if (
+        Math.abs(shot.x - player.x) < 20 &&
+        Math.abs(shot.y - player.y) < 25
+    ) {
+        enemyShots.splice(index, 1);
+
+        lives--;
+        livesDisplay.textContent = "Lives: " + lives;
+        makeParticles(player.x, player.y);
+
+        if (lives <= 0) {
+            gameOver = true;
+            playGameOverSound();
+        }
+    }
+});
+    shots.forEach((shot, index) => {
+        shot.y -= shot.speed;
+
+        ctx.fillStyle = "#22d3ee";
+        ctx.shadowColor = "#22d3ee";
+        ctx.shadowBlur = 15;
+        ctx.fillRect(shot.x - 3, shot.y, 6, 16);
+        ctx.shadowBlur = 0;
+
+        if (shot.y < 0) shots.splice(index, 1);
+    });
+
+    if (Date.now() - lastEnemy > Math.max(350, spawnDelay - score * 3)) {
+        createEnemy();
+        lastEnemy = Date.now();
+    }
+
+   enemies.forEach((enemy, ei) => {
+    enemy.y += enemy.speed;
+    if (Math.random() < 0.003) {
+    enemyShoot(enemy);
+}
+    drawEnemy(enemy);
+
+    // Enemy reaches player
+    if (
+        Math.abs(enemy.x - player.x) < 30 &&
+        Math.abs(enemy.y - player.y) < 30
+    ) {
+        enemies.splice(ei, 1);
+        lives--;
+        livesDisplay.textContent = "Lives: " + lives;
+        makeParticles(player.x, player.y);
+
+        if (lives <= 0) {
+            gameOver = true;
+            playGameOverSound();
+        }
+        return;
+    }
+
+    // Enemy passes bottom
+    if (enemy.y > 610) {
+        enemies.splice(ei, 1);
+        lives--;
+        livesDisplay.textContent = "Lives: " + lives;
+
+        if (lives <= 0) {
+            gameOver = true;
+            playGameOverSound();
+        }
+        return;
+    }
+
+   // Energy shot hits enemy
+shots.forEach((shot, si) => {
+    if (
+        Math.abs(shot.x - enemy.x) < 22 &&
+        Math.abs(shot.y - enemy.y) < 22
+    ) {
+        shots.splice(si, 1);
+
+        enemy.health--;
+
+        if (enemy.health <= 0) {
+            makeParticles(enemy.x, enemy.y);
+            enemies.splice(ei, 1);
+
+            score += 10;
+            scoreDisplay.textContent = "Score: " + score;
+
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem("galaxyBest", highScore);
+                highDisplay.textContent = "Best: " + highScore;
+            }
+        }
+    }
+});
+});
+    particles.forEach((p, index) => {
+        p.x += p.dx;
+        p.y += p.dy;
+        p.life--;
+
+        ctx.fillStyle = Math.random() > 0.5 ? "#fbbf24" : "#fb7185";
+ctx.globalAlpha = Math.max(0, p.life / 55);
+ctx.shadowColor = "#f97316";
+ctx.shadowBlur = 15;
+
+ctx.fillRect(
+    p.x,
+    p.y,
+    p.size || 4,
+    p.size || 4
+);
+
+ctx.shadowBlur = 0;
+ctx.globalAlpha = 1;
+
+        if (p.life <= 0) particles.splice(index, 1);
+    });
+
+    animation = requestAnimationFrame(gameLoop);
+}
+
+// Keyboard controls
+document.addEventListener("keydown", event => {
+    if (!playing || gameOver) return;
+
+    if (event.code === "ArrowLeft") keys.left = true;
+    if (event.code === "ArrowRight") keys.right = true;
+
+    if (event.code === "Space") {
+        keys.fire = true;
+        event.preventDefault();
+    }
+});
+
+document.addEventListener("keyup", event => {
+    if (event.code === "ArrowLeft") keys.left = false;
+    if (event.code === "ArrowRight") keys.right = false;
+    if (event.code === "Space") keys.fire = false;
+});
+
+// Mobile controls
+function holdButton(id, key) {
+    const button = document.getElementById(id);
+
+    button.addEventListener("pointerdown", event => {
+        event.preventDefault();
+        if (!playing || gameOver) return;
+
+        keys[key] = true;
+        button.setPointerCapture(event.pointerId);
+    });
+
+    button.addEventListener("pointerup", () => {
+        keys[key] = false;
+    });
+
+    button.addEventListener("pointercancel", () => {
+        keys[key] = false;
+    });
+
+    button.addEventListener("lostpointercapture", () => {
+        keys[key] = false;
+    });
+}
+
+holdButton("left", "left");
+holdButton("right", "right");
+holdButton("fire", "fire");
+
+document.getElementById("restart").addEventListener("click", () => {
+    menu.style.display = "block";
+    document.getElementById("controls").style.display = "none";
+    document.getElementById("restart").style.display = "none";
+    cancelAnimationFrame(animation);
+    playing = false;
+});
+
+document.getElementById("controls").style.display = "none";
+document.getElementById("restart").style.display = "none";
+ctx.fillStyle = "white";
+ctx.font = "20px Arial";
+ctx.textAlign = "center";
+ctx.fillText("Choose a difficulty to begin", 250, 300);
+
+</script>
+
+</body>
+</html>
